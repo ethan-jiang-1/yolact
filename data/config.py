@@ -172,7 +172,15 @@ pascal_sbd_dataset = dataset_base.copy({
     'class_names': PASCAL_CLASSES,
 })
 
-
+cig_butts_dataset = dataset_base.copy({
+  'name': 'Immersive Limit - Cigarette Butts',
+  'train_info': '/content/cig_butts/train/coco_annotations.json',
+  'train_images': '/content/cig_butts/train/images/',
+  'valid_info': '/content/cig_butts/val/coco_annotations.json',
+  'valid_images': '/content/cig_butts/val/images/',
+  'class_names': ('cig_butt'),
+  'label_map': { 1:  1 }
+})
 
 
 
