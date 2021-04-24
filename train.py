@@ -99,7 +99,7 @@ if args.autoscale and args.batch_size != 8:
 
 # Update training parameters from the config if necessary
 def replace(name):
-    if getattr(args, name) == None: setattr(args, name, getattr(cfg, name))
+    if getattr(args, name) is None: setattr(args, name, getattr(cfg, name))
 replace('lr')
 replace('decay')
 replace('gamma')

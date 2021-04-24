@@ -180,6 +180,7 @@ def make_net(in_channels, conf, include_last_relu=True):
             layer_name = layer_cfg[0]
 
             if layer_name == 'cat':
+                from yolact import Concat
                 nets = [make_net(in_channels, x) for x in layer_cfg[1]]
                 layer = Concat([net[0] for net in nets], layer_cfg[2])
                 num_channels = sum([net[1] for net in nets])

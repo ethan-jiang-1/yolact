@@ -1,4 +1,5 @@
 from data import *
+from data.config import cfg
 from utils.augmentations import SSDAugmentation, BaseTransform
 from utils.functions import MovingAverage, SavePath
 from utils.logger import Log
@@ -25,15 +26,22 @@ import datetime
 import eval as eval_script
 
 args = None
-loss_types = None
-cur_lr = None
+
+loss_types = ['B', 'C', 'M', 'P', 'D', 'E', 'S', 'I']
+cur_lr = 1e-5
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
 
+def set_args(a_args):
+    global args
+    args = a_args
+
+def get_args():
+    return args
 
 def parse_args():
-    global args, loss_types, cur_lr
+    global args
     parser = argparse.ArgumentParser(
         description='Yolact Training Script')
     parser.add_argument('--batch_size', default=8, type=int,
@@ -86,56 +94,59 @@ def parse_args():
                         help='YOLACT will automatically scale the lr and the number of iterations depending on the batch size. Set this if you want to disable that.')
 
     parser.set_defaults(keep_latest=False, log=True, log_gpu=False, interrupt=True, autoscale=True)
-    args = parser.parse_args()
-
-    if args.config is not None:
-        set_cfg(args.config)
-
-    if args.dataset is not None:
-        set_dataset(args.dataset)
-
-    if args.autoscale and args.batch_size != 8:
-        factor = args.batch_size / 8
-        if __name__ == '__main__':
-            print('Scaling parameters by %.2f to account for a batch size of %d.' % (factor, args.batch_size))
-
-        cfg.lr *= factor
-        cfg.max_iter //= factor
-        cfg.lr_steps = [x // factor for x in cfg.lr_steps]
+    a_args = parser.parse_args()
 
     # Update training parameters from the config if necessary
     def replace(name):
-        if getattr(args, name) == None: setattr(args, name, getattr(cfg, name))
+        if getattr(a_args, name) is None: setattr(a_args, name, getattr(cfg, name))
+
     replace('lr')
     replace('decay')
     replace('gamma')
     replace('momentum')
 
+    set_args(a_args)
+    return a_args
+
+def update_env_and_cfg_by_args(a_args):
+
+    if a_args.config is not None:
+        set_cfg(a_args.config)
+
+    if a_args.dataset is not None:
+        set_dataset(a_args.dataset)
+
+    if a_args.autoscale and a_args.batch_size != 8:
+        factor = a_args.batch_size / 8
+        if __name__ == '__main__':
+            print('Scaling parameters by %.2f to account for a batch size of %d.' % (factor, a_args.batch_size))
+
+        cfg.lr *= factor
+        cfg.max_iter //= factor
+        cfg.lr_steps = [x // factor for x in cfg.lr_steps]
+
     # This is managed by set_lr
-    cur_lr = args.lr
+    set_lr(None, a_args.lr)
 
     if torch.cuda.device_count() == 0:
         print('No GPUs detected. Exiting...')
         exit(-1)
 
-    if args.batch_size // torch.cuda.device_count() < 6:
+    if a_args.batch_size // torch.cuda.device_count() < 6:
         if __name__ == '__main__':
             print('Per-GPU batch size is less than the recommended limit for batch norm. Disabling batch norm.')
         cfg.freeze_bn = True
 
-    loss_types = ['B', 'C', 'M', 'P', 'D', 'E', 'S', 'I']
-
     if torch.cuda.is_available():
-        if args.cuda:
+        if a_args.cuda:
             torch.set_default_tensor_type('torch.cuda.FloatTensor')
-        if not args.cuda:
+        if not a_args.cuda:
             print("WARNING: It looks like you have a CUDA device, but aren't " +
                 "using CUDA.\nRun with --cuda for optimal training speed.")
             torch.set_default_tensor_type('torch.FloatTensor')
     else:
         torch.set_default_tensor_type('torch.FloatTensor')
 
-    return args
 
 class NetLoss(nn.Module):
     """
@@ -355,7 +366,7 @@ def train():
                         log.log_gpu_stats = (iteration % 10 == 0) # nvidia-smi is sloooow
                         
                     log.log('train', loss=loss_info, epoch=epoch, iter=iteration,
-                        lr=round(cur_lr, 10), elapsed=elapsed)
+                        lr=round(get_lr(), 10), elapsed=elapsed)
 
                     log.log_gpu_stats = args.log_gpu
                 
@@ -394,11 +405,15 @@ def train():
 
 
 def set_lr(optimizer, new_lr):
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = new_lr
+    if optimizer is not None:
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = new_lr
     
     global cur_lr
     cur_lr = new_lr
+
+def get_lr():
+    return cur_lr
 
 def gradinator(x):
     x.requires_grad = False
@@ -510,5 +525,6 @@ def setup_eval():
 
 
 if __name__ == '__main__':
-    parse_args()
+    a_args = parse_args()
+    update_env_and_cfg_by_args(a_args)
     train()

@@ -47,8 +47,8 @@ class Compose(object):
         >>> ])
     """
 
-    def __init__(self, transforms):
-        self.transforms = transforms
+    def __init__(self, a_transforms):
+        self.transforms = a_transforms
 
     def __call__(self, img, masks=None, boxes=None, labels=None):
         for t in self.transforms:
