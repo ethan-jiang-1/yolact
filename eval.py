@@ -1107,3 +1107,10 @@ if __name__ == '__main__':
         evaluate(net, dataset)
 
 
+def set_args(a_args):
+    global args 
+    args = a_args
+
+
+def get_args():
+    return args
