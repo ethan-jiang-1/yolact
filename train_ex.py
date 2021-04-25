@@ -1,5 +1,6 @@
-from data import *
-from data.config import cfg
+#from data import *
+from data.config import MEANS, cfg,  set_cfg, set_dataset
+from data.coco import COCODetection, detection_collate, enforce_size
 from utils.augmentations import SSDAugmentation, BaseTransform
 from utils.functions import MovingAverage, SavePath
 from utils.logger import Log
@@ -7,25 +8,23 @@ from utils import timer
 from layers.modules import MultiBoxLoss
 from yolact import Yolact
 import os
-import sys
+#import sys
 import time
 import math, random
-from pathlib import Path
+#from pathlib import Path
 import torch
-from torch.autograd import Variable
+#from torch.autograd import Variable
 import torch.nn as nn
 import torch.optim as optim
-import torch.backends.cudnn as cudnn
-import torch.nn.init as init
+#import torch.backends.cudnn as cudnn
+#import torch.nn.init as init
 import torch.utils.data as data
-import numpy as np
+#import numpy as np
 import argparse
 import datetime
 
 # Oof
 import eval as eval_script
-
-args = None
 
 loss_types = ['B', 'C', 'M', 'P', 'D', 'E', 'S', 'I']
 cur_lr = 1e-5
@@ -33,15 +32,7 @@ cur_lr = 1e-5
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
 
-def set_args(a_args):
-    global args
-    args = a_args
-
-def get_args():
-    return args
-
 def parse_args():
-    global args
     parser = argparse.ArgumentParser(
         description='Yolact Training Script')
     parser.add_argument('--batch_size', default=8, type=int,
@@ -105,7 +96,6 @@ def parse_args():
     replace('gamma')
     replace('momentum')
 
-    set_args(a_args)
     return a_args
 
 def update_env_and_cfg_by_args(a_args):
@@ -171,7 +161,7 @@ class CustomDataParallel(nn.DataParallel):
     It should also be faster than the general case.
     """
 
-    def scatter(self, inputs, kwargs, device_ids):
+    def scatter(self, inputs, kwargs, device_ids, args):
         # More like scatter and data prep at the same time. The point is we prep the data in such a way
         # that no scatter is necessary, and there's no need to shuffle stuff around different GPUs.
         devices = ['cuda:' + str(x) for x in device_ids]
@@ -189,7 +179,7 @@ class CustomDataParallel(nn.DataParallel):
         return out
 
 
-def prepare_train(args=args):
+def prepare_train(args):
     if not os.path.exists(args.save_folder):
         os.mkdir(args.save_folder)
 
@@ -232,8 +222,8 @@ def prepare_train(args=args):
     return dataset, val_dataset, net
 
 
-def train(args=args):
-    dataset, val_dataset, yolact_net = parse_args(args=args)
+def train(args):
+    dataset, val_dataset, yolact_net = prepare_train(args)
     net = yolact_net
 
     log = None
@@ -483,7 +473,7 @@ def no_inf_mean(x:torch.Tensor):
     else:
         return x.mean()
 
-def compute_validation_loss(net, data_loader, criterion):
+def compute_validation_loss(net, data_loader, criterion, args):
     global loss_types
 
     with torch.no_grad():
@@ -536,6 +526,6 @@ def setup_eval():
 
 
 if __name__ == '__main__':
-    a_args = parse_args()
-    update_env_and_cfg_by_args(a_args)
-    train()
+    args = parse_args()
+    update_env_and_cfg_by_args(args)
+    train(args)
