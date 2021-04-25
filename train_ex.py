@@ -183,7 +183,7 @@ def get_default_log_avgs():
     return { k: MovingAverage(100) for k in loss_types }
 
 
-def prepare_train_data_net(args):
+def prepare_dataset_dataloader(args):
     if not os.path.exists(args.save_folder):
         os.mkdir(args.save_folder)
 
@@ -198,11 +198,6 @@ def prepare_train_data_net(args):
                                     info_file=cfg.dataset.valid_info,
                                     transform=BaseTransform(MEANS))
 
-    # Parallel wraps the underlying module, but when saving and loading we don't want that
-    yolact_net = Yolact()
-    #net = yolact_net
-    yolact_net.train()
-
     # I don't use the timer during training (I use a different timing method).
     # Apparently there's a race condition with multiple GPUs, so disable it just to be safe.
     timer.disable_all()
@@ -213,6 +208,18 @@ def prepare_train_data_net(args):
     elif args.resume == 'latest':
         args.resume = SavePath.get_latest(args.save_folder, cfg.name)
 
+    data_loader = data.DataLoader(dataset, args.batch_size,
+                                  num_workers=args.num_workers,
+                                  shuffle=True, collate_fn=detection_collate,
+                                  pin_memory=True)
+
+    return dataset, val_dataset, data_loader
+
+def prepare_train_net_optimizer(args):
+    yolact_net = Yolact()
+    net = yolact_net
+    net.train()
+
     if args.resume is not None:
         print('Resuming training, loading {}...'.format(args.resume))
         yolact_net.load_weights(args.resume)
@@ -222,22 +229,6 @@ def prepare_train_data_net(args):
     else:
         print('Initializing weights...')
         yolact_net.init_weights(backbone_path=args.save_folder + cfg.backbone.path)
-
-    data_loader = data.DataLoader(dataset, args.batch_size,
-                                  num_workers=args.num_workers,
-                                  shuffle=True, collate_fn=detection_collate,
-                                  pin_memory=True)
-
-    return dataset, val_dataset, data_loader, yolact_net
-
-def prepare_train_log_optimizer(args, yolact_net):
-    #net = yolact_net
-
-    log = None
-    if args.log:
-        log = Log(cfg.name, args.log_folder, dict(args._get_kwargs()),
-            overwrite=(args.resume is None), log_gpu_stats=args.log_gpu)
-
 
     optimizer = optim.SGD(yolact_net.parameters(), lr=args.lr, momentum=args.momentum,
                           weight_decay=args.decay)
@@ -252,16 +243,25 @@ def prepare_train_log_optimizer(args, yolact_net):
             print('Error: Batch allocation (%s) does not sum to batch size (%s).' % (args.batch_alloc, args.batch_size))
             exit(-1)
 
-    yolact_net = CustomDataParallel(NetLoss(yolact_net, criterion))
+    net = CustomDataParallel(NetLoss(yolact_net, criterion))
     if args.cuda:
-        yolact_net = yolact_net.cuda()
+        net = net.cuda()
     
     # Initialize everything
     if not cfg.freeze_bn: yolact_net.freeze_bn() # Freeze bn so we don't kill our means
     yolact_net(torch.zeros(1, 3, cfg.max_size, cfg.max_size).cuda())
     if not cfg.freeze_bn: yolact_net.freeze_bn(True)
 
-    return log, optimizer
+    return yolact_net, net, optimizer
+
+def prepare_log(args):
+    log = None
+    if args.log:
+        log = Log(cfg.name, args.log_folder, dict(args._get_kwargs()),
+            overwrite=(args.resume is None), log_gpu_stats=args.log_gpu)
+    return log
+
+
 
 def save_yolact_net(yolact_net, args, iteration, epoch, mode="iteration"):
     save_path = lambda epoch, iteration: SavePath(cfg.name, epoch, iteration).get_path(root=args.save_folder)
@@ -329,9 +329,10 @@ def update_cfg_lr(iteration, optimizer, loss_avgs):
 
 
 def train(args):
-    dataset, val_dataset, data_loader, yolact_net = prepare_train_data_net(args)
+    dataset, val_dataset, data_loader= prepare_dataset_dataloader(args)
     #net = yolact_net
-    log, optimizer = prepare_train_log_optimizer(args, yolact_net)
+    yolact_net, net, optimizer = prepare_train_net_optimizer(args)
+    log = prepare_log(args)
 
     # loss counters
     #loc_loss = 0
@@ -382,7 +383,7 @@ def train(args):
             optimizer.zero_grad()
 
             # Forward Pass + Compute loss at the same time (see CustomDataParallel and NetLoss)
-            losses = yolact_net(datum)
+            losses = net(datum)
             
             losses = { k: (v).mean() for k,v in losses.items() } # Mean here because Dataparallel
             loss = sum([losses[k] for k in losses])
