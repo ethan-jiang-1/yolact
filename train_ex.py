@@ -289,7 +289,7 @@ def save_yolact_net(yolact_net, args, iteration, epoch, mode="iteration"):
                 print('Deleting old save...')
                 os.remove(latest)
 
-def log_iteration(log, losses, loss, iteration, epoch, elapsed):
+def log_iteration(log, losses, loss, iteration, epoch, elapsed, args):
     precision = 5
     loss_info = {k: round(losses[k].item(), precision) for k in losses}
     loss_info['T'] = round(loss.item(), precision)
@@ -416,7 +416,7 @@ def train(args):
                 prompt_progress(epoch, iteration, elapsed, time_avg, loss_avgs, losses)
 
             if args.log:
-                log_iteration(log, losses, loss, iteration, epoch, elapsed)
+                log_iteration(log, losses, loss, iteration, epoch, elapsed, args)
             
             iteration += 1
 
