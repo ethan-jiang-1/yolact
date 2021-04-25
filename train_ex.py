@@ -219,7 +219,8 @@ def prepare_dataset_dataloader(args):
 
     return dataset, val_dataset, data_loader
 
-def prepare_train_loss_optimizer(args):
+
+def prepare_model(args):
     yolact_net = Yolact()
     net = yolact_net
     net.train()
@@ -231,8 +232,16 @@ def prepare_train_loss_optimizer(args):
         if args.start_iter == -1:
             args.start_iter = SavePath.from_str(args.resume).iteration
     else:
-        print('Initializing weights...')
-        yolact_net.init_weights(backbone_path=args.save_folder + cfg.backbone.path)
+        init_path = args.save_folder + cfg.backbone.path
+        print('Initializing weights...', init_path)
+        if os.path.isfile(init_path):
+            yolact_net.init_weights(backbone_path=init_path)
+        else:
+            print("no init weight, use empty")
+    return yolact_net
+
+
+def prepare_loss_optimizer(args, yolact_net):
 
     optimizer = optim.SGD(yolact_net.parameters(), lr=args.lr, momentum=args.momentum,
                           weight_decay=args.decay)
@@ -256,7 +265,7 @@ def prepare_train_loss_optimizer(args):
     yolact_net(torch.zeros(1, 3, cfg.max_size, cfg.max_size).cuda())
     if not cfg.freeze_bn: yolact_net.freeze_bn(True)
 
-    return yolact_net, netloss, optimizer
+    return netloss, optimizer
 
 def prepare_log(args):
     log = None
@@ -555,7 +564,8 @@ if __name__ == '__main__':
     update_env_and_cfg_by_args(args)
 
     dataset, val_dataset, data_loader= prepare_dataset_dataloader(args)
-    yolact_net, netloss, optimizer = prepare_train_loss_optimizer(args)
+    yolact_net = prepare_model(args)
+    netloss, optimizer = prepare_loss_optimizer(args, yolact_net)
     log = prepare_log(args)
 
     train(args, dataset, val_dataset, data_loader, yolact_net, netloss, optimizer, log)
