@@ -156,16 +156,20 @@ class NetLoss(nn.Module):
         return losses
 
 class CustomDataParallel(nn.DataParallel):
+    def __init__(self, module, device_ids=None, output_device=None, dim=0, args_batch_alloc=0):
+        super(CustomDataParallel, self).__init__(module)
+        self.args_batch_alloc = args_batch_alloc
+
     """
     This is a custom version of DataParallel that works better with our training data.
     It should also be faster than the general case.
     """
 
-    def scatter(self, inputs, kwargs, device_ids, args):
+    def scatter(self, inputs, kwargs, device_ids):
         # More like scatter and data prep at the same time. The point is we prep the data in such a way
         # that no scatter is necessary, and there's no need to shuffle stuff around different GPUs.
         devices = ['cuda:' + str(x) for x in device_ids]
-        splits = prepare_data(inputs[0], devices, allocation=args.batch_alloc)
+        splits = prepare_data(inputs[0], devices, allocation=self.args_batch_alloc)
 
         return [[split[device_idx] for split in splits] for device_idx in range(len(devices))], \
             [kwargs] * len(devices)
@@ -215,7 +219,7 @@ def prepare_dataset_dataloader(args):
 
     return dataset, val_dataset, data_loader
 
-def prepare_train_net_optimizer(args):
+def prepare_train_loss_optimizer(args):
     yolact_net = Yolact()
     net = yolact_net
     net.train()
@@ -243,16 +247,16 @@ def prepare_train_net_optimizer(args):
             print('Error: Batch allocation (%s) does not sum to batch size (%s).' % (args.batch_alloc, args.batch_size))
             exit(-1)
 
-    net = CustomDataParallel(NetLoss(yolact_net, criterion))
+    netloss = CustomDataParallel(NetLoss(yolact_net, criterion), args_batch_alloc=args.batch_alloc)
     if args.cuda:
-        net = net.cuda()
+        netloss = netloss.cuda()
     
     # Initialize everything
     if not cfg.freeze_bn: yolact_net.freeze_bn() # Freeze bn so we don't kill our means
     yolact_net(torch.zeros(1, 3, cfg.max_size, cfg.max_size).cuda())
     if not cfg.freeze_bn: yolact_net.freeze_bn(True)
 
-    return yolact_net, net, optimizer
+    return yolact_net, netloss, optimizer
 
 def prepare_log(args):
     log = None
@@ -331,7 +335,7 @@ def update_cfg_lr(iteration, optimizer, loss_avgs, args):
 def train(args):
     dataset, val_dataset, data_loader= prepare_dataset_dataloader(args)
     #net = yolact_net
-    yolact_net, net, optimizer = prepare_train_net_optimizer(args)
+    yolact_net, netloss, optimizer = prepare_train_loss_optimizer(args)
     log = prepare_log(args)
 
     # loss counters
@@ -383,7 +387,7 @@ def train(args):
             optimizer.zero_grad()
 
             # Forward Pass + Compute loss at the same time (see CustomDataParallel and NetLoss)
-            losses = net(datum)
+            losses = netloss(datum)
             
             losses = { k: (v).mean() for k,v in losses.items() } # Mean here because Dataparallel
             loss = sum([losses[k] for k in losses])
