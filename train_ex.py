@@ -169,7 +169,7 @@ class CustomDataParallel(nn.DataParallel):
         # More like scatter and data prep at the same time. The point is we prep the data in such a way
         # that no scatter is necessary, and there's no need to shuffle stuff around different GPUs.
         devices = ['cuda:' + str(x) for x in device_ids]
-        splits = prepare_data(inputs[0], args, devices, allocation=self.args.batch_alloc)
+        splits = prepare_data(inputs[0], self.args, devices, allocation=self.args.batch_alloc)
 
         return [[split[device_idx] for split in splits] for device_idx in range(len(devices))], \
             [kwargs] * len(devices)
