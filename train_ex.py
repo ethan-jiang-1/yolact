@@ -308,7 +308,7 @@ def prompt_progress(epoch, iteration, elapsed, time_avg, loss_avgs, losses):
             % tuple([epoch, iteration] + loss_labels + [total, eta_str, elapsed]), flush=True)
 
 
-def update_cfg_lr(iteration, optimizer, loss_avgs):
+def update_cfg_lr(iteration, optimizer, loss_avgs, args):
     changed = False
     for change in cfg.delayed_settings:
         if iteration >= change[0]:
@@ -368,7 +368,7 @@ def train(args):
             if iteration == cfg.max_iter:
                 break
 
-            update_cfg_lr(iteration, optimizer, loss_avgs)
+            update_cfg_lr(iteration, optimizer, loss_avgs, args)
 
             # Warm up by linearly interpolating the learning rate from some smaller value
             if cfg.lr_warmup_until > 0 and iteration <= cfg.lr_warmup_until:
