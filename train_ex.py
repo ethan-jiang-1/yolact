@@ -156,9 +156,9 @@ class NetLoss(nn.Module):
         return losses
 
 class CustomDataParallel(nn.DataParallel):
-    def __init__(self, module, device_ids=None, output_device=None, dim=0, args_batch_alloc=0):
+    def __init__(self, module, device_ids=None, output_device=None, dim=0, args=None):
         super(CustomDataParallel, self).__init__(module)
-        self.args_batch_alloc = args_batch_alloc
+        self.args = args
 
     """
     This is a custom version of DataParallel that works better with our training data.
@@ -169,7 +169,7 @@ class CustomDataParallel(nn.DataParallel):
         # More like scatter and data prep at the same time. The point is we prep the data in such a way
         # that no scatter is necessary, and there's no need to shuffle stuff around different GPUs.
         devices = ['cuda:' + str(x) for x in device_ids]
-        splits = prepare_data(inputs[0], devices, allocation=self.args_batch_alloc)
+        splits = prepare_data(inputs[0], args, devices, allocation=self.args.batch_alloc)
 
         return [[split[device_idx] for split in splits] for device_idx in range(len(devices))], \
             [kwargs] * len(devices)
@@ -247,7 +247,7 @@ def prepare_train_loss_optimizer(args):
             print('Error: Batch allocation (%s) does not sum to batch size (%s).' % (args.batch_alloc, args.batch_size))
             exit(-1)
 
-    netloss = CustomDataParallel(NetLoss(yolact_net, criterion), args_batch_alloc=args.batch_alloc)
+    netloss = CustomDataParallel(NetLoss(yolact_net, criterion), args=args)
     if args.cuda:
         netloss = netloss.cuda()
     
@@ -450,7 +450,7 @@ def gradinator(x):
     x.requires_grad = False
     return x
 
-def prepare_data(datum, devices:list=None, allocation:list=None):
+def prepare_data(datum, args, devices:list=None, allocation:list=None):
     with torch.no_grad():
         if devices is None:
             devices = ['cuda:0'] if args.cuda else ['cpu']
@@ -512,7 +512,7 @@ def compute_validation_loss(net, data_loader, criterion, args):
         # Don't switch to eval mode because we want to get losses
         iterations = 0
         for datum in data_loader:
-            images, targets, masks, num_crowds = prepare_data(datum)
+            images, targets, masks, num_crowds = prepare_data(datum, args)
             out = net(images)
 
             wrapper = ScatterWrapper(targets, masks, num_crowds)
