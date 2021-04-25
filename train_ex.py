@@ -179,7 +179,11 @@ class CustomDataParallel(nn.DataParallel):
         return out
 
 
-def prepare_train(args):
+def get_default_log_avgs():
+    return { k: MovingAverage(100) for k in loss_types }
+
+
+def prepare_train_data_net(args):
     if not os.path.exists(args.save_folder):
         os.mkdir(args.save_folder)
 
@@ -196,8 +200,8 @@ def prepare_train(args):
 
     # Parallel wraps the underlying module, but when saving and loading we don't want that
     yolact_net = Yolact()
-    net = yolact_net
-    net.train()
+    #net = yolact_net
+    yolact_net.train()
 
     # I don't use the timer during training (I use a different timing method).
     # Apparently there's a race condition with multiple GPUs, so disable it just to be safe.
@@ -219,12 +223,15 @@ def prepare_train(args):
         print('Initializing weights...')
         yolact_net.init_weights(backbone_path=args.save_folder + cfg.backbone.path)
 
-    return dataset, val_dataset, net
+    data_loader = data.DataLoader(dataset, args.batch_size,
+                                  num_workers=args.num_workers,
+                                  shuffle=True, collate_fn=detection_collate,
+                                  pin_memory=True)
 
+    return dataset, val_dataset, data_loader, yolact_net
 
-def train(args):
-    dataset, val_dataset, yolact_net = prepare_train(args)
-    net = yolact_net
+def prepare_train_log_optimizer(args, yolact_net):
+    #net = yolact_net
 
     log = None
     if args.log:
@@ -232,7 +239,7 @@ def train(args):
             overwrite=(args.resume is None), log_gpu_stats=args.log_gpu)
 
 
-    optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.momentum,
+    optimizer = optim.SGD(yolact_net.parameters(), lr=args.lr, momentum=args.momentum,
                           weight_decay=args.decay)
     criterion = MultiBoxLoss(num_classes=cfg.num_classes,
                              pos_threshold=cfg.positive_iou_threshold,
@@ -245,164 +252,182 @@ def train(args):
             print('Error: Batch allocation (%s) does not sum to batch size (%s).' % (args.batch_alloc, args.batch_size))
             exit(-1)
 
-    net = CustomDataParallel(NetLoss(net, criterion))
+    yolact_net = CustomDataParallel(NetLoss(yolact_net, criterion))
     if args.cuda:
-        net = net.cuda()
+        yolact_net = yolact_net.cuda()
     
     # Initialize everything
     if not cfg.freeze_bn: yolact_net.freeze_bn() # Freeze bn so we don't kill our means
     yolact_net(torch.zeros(1, 3, cfg.max_size, cfg.max_size).cuda())
     if not cfg.freeze_bn: yolact_net.freeze_bn(True)
 
+    return log, optimizer
+
+def save_yolact_net(yolact_net, args, iteration, epoch, mode="iteration"):
+    save_path = lambda epoch, iteration: SavePath(cfg.name, epoch, iteration).get_path(root=args.save_folder)
+ 
+    if mode == "iteration":
+        if args.keep_latest:
+            latest = SavePath.get_latest(args.save_folder, cfg.name)
+    elif mode == "interrupt":
+        # Delete previous copy of the interrupted network so we don't spam the weights folder
+        SavePath.remove_interrupt(args.save_folder)
+
+    print('Saving state, iter:', iteration)
+    if mode != "interrupt":
+        yolact_net.save_weights(save_path(epoch, iteration))
+    else:
+        yolact_net.save_weights(save_path(epoch, repr(iteration) + '_interrupt'))
+
+    if mode == "iteration":
+        if args.keep_latest and latest is not None:
+            if args.keep_latest_interval <= 0 or iteration % args.keep_latest_interval != args.save_interval:
+                print('Deleting old save...')
+                os.remove(latest)
+
+def log_iteration(log, losses, loss, iteration, epoch, elapsed):
+    precision = 5
+    loss_info = {k: round(losses[k].item(), precision) for k in losses}
+    loss_info['T'] = round(loss.item(), precision)
+
+    if args.log_gpu:
+        log.log_gpu_stats = (iteration % 10 == 0) # nvidia-smi is sloooow
+        
+    log.log('train', loss=loss_info, epoch=epoch, iter=iteration,
+        lr=round(get_lr(), 10), elapsed=elapsed)
+
+    log.log_gpu_stats = args.log_gpu
+
+def prompt_progress(epoch, iteration, elapsed, time_avg, loss_avgs, losses):
+    eta_str = str(datetime.timedelta(seconds=(cfg.max_iter-iteration) * time_avg.get_avg())).split('.')[0]
+    
+    total = sum([loss_avgs[k].get_avg() for k in losses])
+    loss_labels = sum([[k, loss_avgs[k].get_avg()] for k in loss_types if k in losses], [])
+    
+    print(('[%3d] %7d ||' + (' %s: %.3f |' * len(losses)) + ' T: %.3f || ETA: %s || timer: %.3f')
+            % tuple([epoch, iteration] + loss_labels + [total, eta_str, elapsed]), flush=True)
+
+
+def update_cfg_lr(iteration, optimizer, loss_avgs):
+    changed = False
+    for change in cfg.delayed_settings:
+        if iteration >= change[0]:
+            changed = True
+            cfg.replace(change[1])
+
+            # Reset the loss averages because things might have changed
+            for avg in loss_avgs:
+                avg.reset()
+    
+    # If a config setting was changed, remove it from the list so we don't keep checking
+    if changed:
+        cfg.delayed_settings = [x for x in cfg.delayed_settings if x[0] > iteration]
+
+    # Warm up by linearly interpolating the learning rate from some smaller value
+    if cfg.lr_warmup_until > 0 and iteration <= cfg.lr_warmup_until:
+        set_lr(optimizer, (args.lr - cfg.lr_warmup_init) * (iteration / cfg.lr_warmup_until) + cfg.lr_warmup_init)
+
+
+def train(args):
+    dataset, val_dataset, data_loader, yolact_net = prepare_train_data_net(args)
+    #net = yolact_net
+    log, optimizer = prepare_train_log_optimizer(args, yolact_net)
+
     # loss counters
-    loc_loss = 0
-    conf_loss = 0
+    #loc_loss = 0
+    #conf_loss = 0
     iteration = max(args.start_iter, 0)
     last_time = time.time()
     
     # Which learning rate adjustment step are we on? lr' = lr * gamma ^ step_index
     step_index = 0
 
-    data_loader = data.DataLoader(dataset, args.batch_size,
-                                  num_workers=args.num_workers,
-                                  shuffle=True, collate_fn=detection_collate,
-                                  pin_memory=True)
-    
-    
-    save_path = lambda epoch, iteration: SavePath(cfg.name, epoch, iteration).get_path(root=args.save_folder)
     time_avg = MovingAverage()
 
     #global loss_types # Forms the print order
-    loss_avgs  = { k: MovingAverage(100) for k in loss_types }
+    loss_avgs  = get_default_log_avgs()
 
     epoch_size = len(dataset) // args.batch_size
     num_epochs = math.ceil(cfg.max_iter / epoch_size)
 
     print('Begin training!')
     print("num_epochs", num_epochs)
-    # try-except so you can use ctrl+c to save early and stop training
-    try:
-        for epoch in range(num_epochs):
-            # Resume from start_iter
-            if (epoch+1)*epoch_size < iteration:
-                continue
-            
-            for datum in data_loader:
-                # Stop if we've reached an epoch if we're resuming from start_iter
-                if iteration == (epoch+1)*epoch_size:
-                    break
-
-                # Stop at the configured number of iterations even if mid-epoch
-                if iteration == cfg.max_iter:
-                    break
-
-                # Change a config setting if we've reached the specified iteration
-                changed = False
-                for change in cfg.delayed_settings:
-                    if iteration >= change[0]:
-                        changed = True
-                        cfg.replace(change[1])
-
-                        # Reset the loss averages because things might have changed
-                        for avg in loss_avgs:
-                            avg.reset()
-                
-                # If a config setting was changed, remove it from the list so we don't keep checking
-                if changed:
-                    cfg.delayed_settings = [x for x in cfg.delayed_settings if x[0] > iteration]
-
-                # Warm up by linearly interpolating the learning rate from some smaller value
-                if cfg.lr_warmup_until > 0 and iteration <= cfg.lr_warmup_until:
-                    set_lr(optimizer, (args.lr - cfg.lr_warmup_init) * (iteration / cfg.lr_warmup_until) + cfg.lr_warmup_init)
-
-                # Adjust the learning rate at the given iterations, but also if we resume from past that iteration
-                while step_index < len(cfg.lr_steps) and iteration >= cfg.lr_steps[step_index]:
-                    step_index += 1
-                    set_lr(optimizer, args.lr * (args.gamma ** step_index))
-                
-                # Zero the grad to get ready to compute gradients
-                optimizer.zero_grad()
-
-                # Forward Pass + Compute loss at the same time (see CustomDataParallel and NetLoss)
-                losses = net(datum)
-                
-                losses = { k: (v).mean() for k,v in losses.items() } # Mean here because Dataparallel
-                loss = sum([losses[k] for k in losses])
-                
-                # no_inf_mean removes some components from the loss, so make sure to backward through all of it
-                # all_loss = sum([v.mean() for v in losses.values()])
-
-                # Backprop
-                loss.backward() # Do this to free up vram even if loss is not finite
-                if torch.isfinite(loss).item():
-                    optimizer.step()
-                
-                # Add the loss to the moving average for bookkeeping
-                for k in losses:
-                    loss_avgs[k].add(losses[k].item())
-
-                cur_time  = time.time()
-                elapsed   = cur_time - last_time
-                last_time = cur_time
-
-                # Exclude graph setup from the timing information
-                if iteration != args.start_iter:
-                    time_avg.add(elapsed)
-
-                if iteration % 10 == 0:
-                    eta_str = str(datetime.timedelta(seconds=(cfg.max_iter-iteration) * time_avg.get_avg())).split('.')[0]
-                    
-                    total = sum([loss_avgs[k].get_avg() for k in losses])
-                    loss_labels = sum([[k, loss_avgs[k].get_avg()] for k in loss_types if k in losses], [])
-                    
-                    print(('[%3d] %7d ||' + (' %s: %.3f |' * len(losses)) + ' T: %.3f || ETA: %s || timer: %.3f')
-                            % tuple([epoch, iteration] + loss_labels + [total, eta_str, elapsed]), flush=True)
-
-                if args.log:
-                    precision = 5
-                    loss_info = {k: round(losses[k].item(), precision) for k in losses}
-                    loss_info['T'] = round(loss.item(), precision)
-
-                    if args.log_gpu:
-                        log.log_gpu_stats = (iteration % 10 == 0) # nvidia-smi is sloooow
-                        
-                    log.log('train', loss=loss_info, epoch=epoch, iter=iteration,
-                        lr=round(get_lr(), 10), elapsed=elapsed)
-
-                    log.log_gpu_stats = args.log_gpu
-                
-                iteration += 1
-
-                if iteration % args.save_interval == 0 and iteration != args.start_iter:
-                    if args.keep_latest:
-                        latest = SavePath.get_latest(args.save_folder, cfg.name)
-
-                    print('Saving state, iter:', iteration)
-                    yolact_net.save_weights(save_path(epoch, iteration))
-
-                    if args.keep_latest and latest is not None:
-                        if args.keep_latest_interval <= 0 or iteration % args.keep_latest_interval != args.save_interval:
-                            print('Deleting old save...')
-                            os.remove(latest)
-            
-            # This is done per epoch
-            if args.validation_epoch > 0:
-                if epoch % args.validation_epoch == 0 and epoch > 0:
-                    compute_validation_map(epoch, iteration, yolact_net, val_dataset, log if args.log else None)
+ 
+    for epoch in range(num_epochs):
+        # Resume from start_iter
+        if (epoch+1)*epoch_size < iteration:
+            continue
         
-        # Compute validation mAP after training is finished
-        compute_validation_map(epoch, iteration, yolact_net, val_dataset, log if args.log else None)
-    except KeyboardInterrupt:
-        if args.interrupt:
-            print('Stopping early. Saving network...')
-            
-            # Delete previous copy of the interrupted network so we don't spam the weights folder
-            SavePath.remove_interrupt(args.save_folder)
-            
-            yolact_net.save_weights(save_path(epoch, repr(iteration) + '_interrupt'))
-        exit()
+        for datum in data_loader:
+            # Stop if we've reached an epoch if we're resuming from start_iter
+            if iteration == (epoch+1)*epoch_size:
+                break
 
-    yolact_net.save_weights(save_path(epoch, iteration))
+            # Stop at the configured number of iterations even if mid-epoch
+            if iteration == cfg.max_iter:
+                break
+
+            update_cfg_lr(iteration, optimizer, loss_avgs)
+
+            # Warm up by linearly interpolating the learning rate from some smaller value
+            if cfg.lr_warmup_until > 0 and iteration <= cfg.lr_warmup_until:
+                set_lr(optimizer, (args.lr - cfg.lr_warmup_init) * (iteration / cfg.lr_warmup_until) + cfg.lr_warmup_init)
+
+            # Adjust the learning rate at the given iterations, but also if we resume from past that iteration
+            while step_index < len(cfg.lr_steps) and iteration >= cfg.lr_steps[step_index]:
+                step_index += 1
+                set_lr(optimizer, args.lr * (args.gamma ** step_index))
+            
+            # Zero the grad to get ready to compute gradients
+            optimizer.zero_grad()
+
+            # Forward Pass + Compute loss at the same time (see CustomDataParallel and NetLoss)
+            losses = yolact_net(datum)
+            
+            losses = { k: (v).mean() for k,v in losses.items() } # Mean here because Dataparallel
+            loss = sum([losses[k] for k in losses])
+            
+            # no_inf_mean removes some components from the loss, so make sure to backward through all of it
+            # all_loss = sum([v.mean() for v in losses.values()])
+
+            # Backprop
+            loss.backward() # Do this to free up vram even if loss is not finite
+            if torch.isfinite(loss).item():
+                optimizer.step()
+            
+            # Add the loss to the moving average for bookkeeping
+            for k in losses:
+                loss_avgs[k].add(losses[k].item())
+
+            cur_time  = time.time()
+            elapsed   = cur_time - last_time
+            last_time = cur_time
+
+            # Exclude graph setup from the timing information
+            if iteration != args.start_iter:
+                time_avg.add(elapsed)
+
+            if iteration % 10 == 0:
+                prompt_progress(epoch, iteration, elapsed, time_avg, loss_avgs, losses)
+
+            if args.log:
+                log_iteration(log, losses, loss, iteration, epoch, elapsed)
+            
+            iteration += 1
+
+            if iteration % args.save_interval == 0 and iteration != args.start_iter:
+                save_yolact_net(yolact_net, args, iteration, epoch)
+        
+        # This is done per epoch
+        if args.validation_epoch > 0:
+            if epoch % args.validation_epoch == 0 and epoch > 0:
+                compute_validation_map(epoch, iteration, yolact_net, val_dataset, log if args.log else None)
+    
+    # Compute validation mAP after training is finished
+    compute_validation_map(epoch, iteration, yolact_net, val_dataset, log if args.log else None)
+
+
+    save_yolact_net(yolact_net, args, iteration, epoch, mode="finial")
 
 
 def set_lr(optimizer, new_lr):
