@@ -188,7 +188,8 @@ class CustomDataParallel(nn.DataParallel):
         
         return out
 
-def train():
+
+def prepare_train(args=args):
     if not os.path.exists(args.save_folder):
         os.mkdir(args.save_folder)
 
@@ -196,6 +197,7 @@ def train():
                             info_file=cfg.dataset.train_info,
                             transform=SSDAugmentation(MEANS))
     
+    val_dataset = None
     if args.validation_epoch > 0:
         setup_eval()
         val_dataset = COCODetection(image_path=cfg.dataset.valid_images,
@@ -206,10 +208,6 @@ def train():
     yolact_net = Yolact()
     net = yolact_net
     net.train()
-
-    if args.log:
-        log = Log(cfg.name, args.log_folder, dict(args._get_kwargs()),
-            overwrite=(args.resume is None), log_gpu_stats=args.log_gpu)
 
     # I don't use the timer during training (I use a different timing method).
     # Apparently there's a race condition with multiple GPUs, so disable it just to be safe.
@@ -230,6 +228,19 @@ def train():
     else:
         print('Initializing weights...')
         yolact_net.init_weights(backbone_path=args.save_folder + cfg.backbone.path)
+
+    return dataset, val_dataset, net
+
+
+def train(args=args):
+    dataset, val_dataset, yolact_net = parse_args(args=args)
+    net = yolact_net
+
+    log = None
+    if args.log:
+        log = Log(cfg.name, args.log_folder, dict(args._get_kwargs()),
+            overwrite=(args.resume is None), log_gpu_stats=args.log_gpu)
+
 
     optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.momentum,
                           weight_decay=args.decay)
@@ -258,9 +269,6 @@ def train():
     conf_loss = 0
     iteration = max(args.start_iter, 0)
     last_time = time.time()
-
-    epoch_size = len(dataset) // args.batch_size
-    num_epochs = math.ceil(cfg.max_iter / epoch_size)
     
     # Which learning rate adjustment step are we on? lr' = lr * gamma ^ step_index
     step_index = 0
@@ -274,11 +282,14 @@ def train():
     save_path = lambda epoch, iteration: SavePath(cfg.name, epoch, iteration).get_path(root=args.save_folder)
     time_avg = MovingAverage()
 
-    global loss_types # Forms the print order
+    #global loss_types # Forms the print order
     loss_avgs  = { k: MovingAverage(100) for k in loss_types }
 
+    epoch_size = len(dataset) // args.batch_size
+    num_epochs = math.ceil(cfg.max_iter / epoch_size)
+
     print('Begin training!')
-    print()
+    print("num_epochs", num_epochs)
     # try-except so you can use ctrl+c to save early and stop training
     try:
         for epoch in range(num_epochs):
