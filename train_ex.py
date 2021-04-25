@@ -193,7 +193,7 @@ def prepare_train_data_net(args):
     
     val_dataset = None
     if args.validation_epoch > 0:
-        setup_eval()
+        setup_eval(args)
         val_dataset = COCODetection(image_path=cfg.dataset.valid_images,
                                     info_file=cfg.dataset.valid_info,
                                     transform=BaseTransform(MEANS))
@@ -546,7 +546,7 @@ def compute_validation_map(epoch, iteration, yolact_net, dataset, log:Log=None):
 
         yolact_net.train()
 
-def setup_eval():
+def setup_eval(args):
     eval_script.parse_args(['--no_bar', '--max_images='+str(args.validation_size)])
 
 
