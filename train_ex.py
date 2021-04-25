@@ -332,12 +332,7 @@ def update_cfg_lr(iteration, optimizer, loss_avgs, args):
         set_lr(optimizer, (args.lr - cfg.lr_warmup_init) * (iteration / cfg.lr_warmup_until) + cfg.lr_warmup_init)
 
 
-def train(args):
-    dataset, val_dataset, data_loader= prepare_dataset_dataloader(args)
-    #net = yolact_net
-    yolact_net, netloss, optimizer = prepare_train_loss_optimizer(args)
-    log = prepare_log(args)
-
+def train(args, dataset, val_dataset, data_loader, yolact_net, netloss, optimizer, log):
     # loss counters
     #loc_loss = 0
     #conf_loss = 0
@@ -558,4 +553,10 @@ def setup_eval(args):
 if __name__ == '__main__':
     args = parse_args()
     update_env_and_cfg_by_args(args)
-    train(args)
+
+    dataset, val_dataset, data_loader= prepare_dataset_dataloader(args)
+    yolact_net, netloss, optimizer = prepare_train_loss_optimizer(args)
+    log = prepare_log(args)
+
+    train(args, dataset, val_dataset, data_loader, yolact_net, netloss, optimizer, log)
+
