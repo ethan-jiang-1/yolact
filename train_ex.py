@@ -34,11 +34,15 @@ sig_num = None
 def receive_signal(signum, stack):
     global sig_num
     sig_num = signum
-    print('#r# Received: {} in train_ex PID:{}'.format(signum, os.getpgid()))
+    print()
+    print('#r# Received Signal: {} '.format(signum))
+    print()
 
 signal.signal(signal.SIGUSR1, receive_signal)
-signal.signal(signal.SIGUSR2, receive_signal)
+#signal.signal(signal.SIGUSR2, receive_signal)
 
+# kill -n 10 pid 
+# to fire signal 10 to pis
 
 loss_types = ['B', 'C', 'M', 'P', 'D', 'E', 'S', 'I']
 cur_lr = 1e-5
