@@ -372,7 +372,7 @@ def resume_train_from_saved_model(args, saved_pathname):
     args.resume = saved_pathname
     basename = os.path.basename(saved_pathname)
 
-    names = basename.split("_")
+    names = basename.split(".")[0].split("_")
     epoch = names[len(names)-2]
     iteration = names[len(names)-1]
 
