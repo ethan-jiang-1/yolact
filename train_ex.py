@@ -298,7 +298,8 @@ def prepare_log(args):
 
 
 def save_yolact_net(yolact_net, args, iteration, epoch, mode="iteration"):
-    save_path = lambda epoch, iteration: SavePath(cfg.name, epoch, iteration).get_path(root=args.save_folder)
+    def save_path(epoch, iteration):
+        return SavePath(cfg.name, epoch, iteration).get_path(root=args.save_folder)
  
     if mode == "iteration":
         if args.keep_latest:
