@@ -335,7 +335,8 @@ def log_iteration(log, losses, loss, iteration, epoch, elapsed, args):
     log.log_gpu_stats = args.log_gpu
 
 def prompt_progress(epoch, iteration, elapsed, time_avg, loss_avgs, losses):
-    eta_str = str(datetime.timedelta(seconds=(cfg.max_iter-iteration) * time_avg.get_avg())).split('.')[0]
+    eta_seconds = (cfg.max_iter - iteration) * time_avg.get_avg()
+    eta_str = str(datetime.timedelta(seconds=eta_seconds)).split('.')[0]
     
     total = sum([loss_avgs[k].get_avg() for k in losses])
     loss_labels = sum([[k, loss_avgs[k].get_avg()] for k in loss_types if k in losses], [])
@@ -409,6 +410,7 @@ def train(args, dataset, val_dataset, data_loader, yolact_net, netloss, optimize
     start_epoch = 0
     if args.resume is not None:
         start_epoch = args.saved_epoch
+        iteration = args.saved_iteration
 
     print('Begin training!')
     print("start_epoch", start_epoch)
