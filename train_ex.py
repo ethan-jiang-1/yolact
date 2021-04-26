@@ -296,7 +296,6 @@ def prepare_log(args):
     return log
 
 
-
 def save_yolact_net(yolact_net, args, iteration, epoch, mode="iteration"):
     def save_path(epoch, iteration):
         return SavePath(cfg.name, epoch, iteration).get_path(root=args.save_folder)
@@ -386,6 +385,7 @@ def resume_train_from_saved_model(args, saved_pathname):
         print("saved_iteration", iteration)
         args.saved_epoch = epoch
         args.saved_iteration = iteration
+        args.start_iter = iteration
     except:
         pass
 
@@ -414,8 +414,8 @@ def train(args, dataset, val_dataset, data_loader, yolact_net, netloss, optimize
         iteration = args.saved_iteration
 
     print('Begin training!')
-    print("start_epoch", start_epoch)
-    print("num_epochs", num_epochs)
+    print("num_epochs", num_epochs)   
+    print("start_epoch", start_epoch, "to", start_epoch + num_epochs)
 
     for epoch in range(start_epoch, start_epoch + num_epochs):
         # Resume from start_iter
@@ -611,7 +611,7 @@ def compute_validation_map(epoch, iteration, yolact_net, dataset, log:Log=None):
         
         start = time.time()
         print()
-        print("Computing validation mAP (this may take a while)...", flush=True)
+        print("Computing validation mAP @{}/{} (this may take a while)...".format(epoch,  iteration), flush=True)
         val_info = eval_script.evaluate(yolact_net, dataset, train_mode=True)
         end = time.time()
 
