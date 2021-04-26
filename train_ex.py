@@ -44,8 +44,6 @@ def get_sig_num():
 signal.signal(signal.SIGUSR1, receive_signal)
 #signal.signal(signal.SIGUSR2, receive_signal)
 
-# kill -n 10 pid 
-# to fire signal 10 to pis
 
 loss_types = ['B', 'C', 'M', 'P', 'D', 'E', 'S', 'I']
 cur_lr = 1e-5
@@ -591,10 +589,19 @@ def compute_validation_map(epoch, iteration, yolact_net, dataset, log:Log=None):
 def setup_eval(args):
     eval_script.parse_args(['--no_bar', '--max_images='+str(args.validation_size)])
 
+def prompt_kill_signal():
+    pid = os.getpid()
+    print()
+    print('#m# start train_ex PID: {}'.format(pid))
+    print("run")
+    print("kill -n 10 {}".format(pid)) 
+    print("to fire signal 10 to this process")
+    print()
+
 
 if __name__ == '__main__':
-    print('#m# start train_ex PID: {}'.format(os.getpid()))
-
+    prompt_kill_signal()
+    
     args = parse_args()
     update_env_and_cfg_by_args(args)
 
