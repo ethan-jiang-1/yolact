@@ -296,7 +296,7 @@ def prepare_log(args):
     return log
 
 
-def save_yolact_net(yolact_net, args, iteration, epoch, mode="iteration"):
+def save_yolact_net(epoch, iteration, yolact_net, args, mode="iteration"):
     def save_path(epoch, iteration):
         return SavePath(cfg.name, epoch, iteration).get_path(root=args.save_folder)
  
@@ -321,7 +321,7 @@ def save_yolact_net(yolact_net, args, iteration, epoch, mode="iteration"):
                 os.remove(latest)
     return saved_pathname
 
-def log_iteration(log, losses, loss, iteration, epoch, elapsed, args):
+def log_iteration(epoch, iteration, log, losses, loss, elapsed, args):
     precision = 5
     loss_info = {k: round(losses[k].item(), precision) for k in losses}
     loss_info['T'] = round(loss.item(), precision)
@@ -374,18 +374,18 @@ def resume_train_from_saved_model(args, saved_pathname):
     basename = os.path.basename(saved_pathname)
 
     names = basename.split(".")[0].split("_")
-    epoch = names[len(names)-2]
-    iteration = names[len(names)-1]
+    a_epoch = names[len(names)-2]
+    a_iteration = names[len(names)-1]
 
     try:
-        epoch = int(epoch)
-        iteration = int(iteration)
+        a_epoch = int(a_epoch)
+        a_iteration = int(a_iteration)
 
-        print("saved_epoch", epoch)
-        print("saved_iteration", iteration)
-        args.saved_epoch = epoch
-        args.saved_iteration = iteration
-        args.start_iter = iteration
+        print("saved_epoch", a_epoch)
+        print("saved_iteration", a_iteration)
+        args.saved_epoch = a_epoch
+        args.saved_iteration = a_iteration
+        args.start_iter = a_iteration
     except:
         pass
 
@@ -475,12 +475,12 @@ def train(args, dataset, val_dataset, data_loader, yolact_net, netloss, optimize
                 prompt_progress(epoch, iteration, elapsed, time_avg, loss_avgs, losses)
 
             if args.log:
-                log_iteration(log, losses, loss, iteration, epoch, elapsed, args)
+                log_iteration(epoch, iteration, log, losses, loss, elapsed, args)
             
             iteration += 1
 
             if iteration % args.save_interval == 0 and iteration != args.start_iter:
-                save_yolact_net(yolact_net, args, iteration, epoch)
+                save_yolact_net(epoch, iteration, yolact_net, args)
         
         # This is done per epoch
         if args.validation_epoch > 0:
@@ -496,9 +496,9 @@ def train(args, dataset, val_dataset, data_loader, yolact_net, netloss, optimize
 
     saved_pathname = None
     if sig_num is not None:
-        saved_pathname = save_yolact_net(yolact_net, args, iteration, epoch, mode="sig_num")
+        saved_pathname = save_yolact_net(epoch, iteration, yolact_net, args, mode="sig_num")
     else:
-        saved_pathname = save_yolact_net(yolact_net, args, iteration, epoch, mode="finial")
+        saved_pathname = save_yolact_net(epoch, iteration, yolact_net, args, mode="finial")
 
     return saved_pathname 
 
