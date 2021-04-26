@@ -115,6 +115,8 @@ def parse_args():
     replace('gamma')
     replace('momentum')
 
+    a_args.saved_epoch = 0
+    a_args.saved_iteration = 0
     return a_args
 
 def update_env_and_cfg_by_args(a_args):
@@ -362,6 +364,30 @@ def update_cfg_lr(iteration, optimizer, loss_avgs, args):
         set_lr(optimizer, (args.lr - cfg.lr_warmup_init) * (iteration / cfg.lr_warmup_until) + cfg.lr_warmup_init)
 
 
+def resume_train_from_saved_model(args, saved_pathname):
+    if not os.path.isfile(saved_pathname):
+        return False
+
+    print("resume from where break")
+    args.resume = saved_pathname
+    basename = os.path.basename(saved_pathname)
+
+    names = basename.split("_")
+    epoch = names[len(names)-2]
+    iteration = names[len(names)-1]
+
+    try:
+        epoch = int(epoch)
+        iteration = int(iteration)
+
+        print("saved_epoch", epoch)
+        print("saved_iteration", iteration)
+        args.saved_epoch = epoch
+        args.saved_iteration = iteration
+    except:
+        pass
+
+
 def train(args, dataset, val_dataset, data_loader, yolact_net, netloss, optimizer, log):
     # loss counters
     #loc_loss = 0
@@ -380,10 +406,15 @@ def train(args, dataset, val_dataset, data_loader, yolact_net, netloss, optimize
     epoch_size = len(dataset) // args.batch_size
     num_epochs = math.ceil(cfg.max_iter / epoch_size)
 
+    start_epoch = 0
+    if args.resume is not None:
+        start_epoch = args.saved_epoch
+
     print('Begin training!')
+    print("start_epoch", start_epoch)
     print("num_epochs", num_epochs)
- 
-    for epoch in range(num_epochs):
+
+    for epoch in range(start_epoch, start_epoch + num_epochs):
         # Resume from start_iter
         if (epoch+1)*epoch_size < iteration:
             continue
