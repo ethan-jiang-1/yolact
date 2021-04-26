@@ -26,6 +26,20 @@ import datetime
 # Oof
 import eval as eval_script
 
+import signal
+#import os
+#import time
+
+sig_num = None
+def receive_signal(signum, stack):
+    global sig_num
+    sig_num = signum
+    print('#r# Received: {} in train_ex PID:{}'.format(signum, os.getpgid()))
+
+signal.signal(signal.SIGUSR1, receive_signal)
+signal.signal(signal.SIGUSR2, receive_signal)
+
+
 loss_types = ['B', 'C', 'M', 'P', 'D', 'E', 'S', 'I']
 cur_lr = 1e-5
 
@@ -431,12 +445,18 @@ def train(args, dataset, val_dataset, data_loader, yolact_net, netloss, optimize
         if args.validation_epoch > 0:
             if epoch % args.validation_epoch == 0 and epoch > 0:
                 compute_validation_map(epoch, iteration, yolact_net, val_dataset, log if args.log else None)
+
+        if sig_num is not None:
+            print("#r# break traning loop due to sig_num", sig_num)
+            break
     
     # Compute validation mAP after training is finished
     compute_validation_map(epoch, iteration, yolact_net, val_dataset, log if args.log else None)
 
-
-    save_yolact_net(yolact_net, args, iteration, epoch, mode="finial")
+    if sig_num is not None:
+        save_yolact_net(yolact_net, args, iteration, epoch, mode="sig_num")
+    else:
+        save_yolact_net(yolact_net, args, iteration, epoch, mode="finial")
 
 
 def set_lr(optimizer, new_lr):
@@ -560,6 +580,8 @@ def setup_eval(args):
 
 
 if __name__ == '__main__':
+    print('#m# start train_ex PID: {}'.format(os.getpid()))
+
     args = parse_args()
     update_env_and_cfg_by_args(args)
 
