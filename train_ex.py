@@ -414,10 +414,11 @@ def train(args, dataset, val_dataset, data_loader, yolact_net, netloss, optimize
         iteration = args.saved_iteration
 
     print('Begin training!')
-    print("num_epochs", num_epochs)   
-    print("start_epoch", start_epoch, "to", start_epoch + num_epochs)
+    print("num_epochs", num_epochs)
+    epoch_range = range(start_epoch, start_epoch + num_epochs, 1)   
+    print("start_epoch", start_epoch, "to", start_epoch + num_epochs, "range", epoch_range)
 
-    for epoch in range(start_epoch, start_epoch + num_epochs):
+    for epoch in epoch_range:
         # Resume from start_iter
         if (epoch+1)*epoch_size < iteration:
             continue
