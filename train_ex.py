@@ -38,6 +38,9 @@ def receive_signal(signum, stack):
     print('#r# Received Signal: {} '.format(signum))
     print()
 
+def get_sig_num():
+    return sig_num
+
 signal.signal(signal.SIGUSR1, receive_signal)
 #signal.signal(signal.SIGUSR2, receive_signal)
 
@@ -304,17 +307,19 @@ def save_yolact_net(yolact_net, args, iteration, epoch, mode="iteration"):
         # Delete previous copy of the interrupted network so we don't spam the weights folder
         SavePath.remove_interrupt(args.save_folder)
 
-    print('Saving state, iter:', iteration)
     if mode != "interrupt":
-        yolact_net.save_weights(save_path(epoch, iteration))
+        saved_pathname = save_path(epoch, iteration)
     else:
-        yolact_net.save_weights(save_path(epoch, repr(iteration) + '_interrupt'))
+        saved_pathname = save_path(epoch, repr(iteration) + '_interrupt') 
+    print('Saving state, iter:', iteration, "saved at", saved_pathname)
+    yolact_net.save_weights(saved_pathname)
 
     if mode == "iteration":
         if args.keep_latest and latest is not None:
             if args.keep_latest_interval <= 0 or iteration % args.keep_latest_interval != args.save_interval:
                 print('Deleting old save...')
                 os.remove(latest)
+    return saved_pathname
 
 def log_iteration(log, losses, loss, iteration, epoch, elapsed, args):
     precision = 5
@@ -457,10 +462,13 @@ def train(args, dataset, val_dataset, data_loader, yolact_net, netloss, optimize
     # Compute validation mAP after training is finished
     compute_validation_map(epoch, iteration, yolact_net, val_dataset, log if args.log else None)
 
+    saved_pathname = None
     if sig_num is not None:
-        save_yolact_net(yolact_net, args, iteration, epoch, mode="sig_num")
+        saved_pathname = save_yolact_net(yolact_net, args, iteration, epoch, mode="sig_num")
     else:
-        save_yolact_net(yolact_net, args, iteration, epoch, mode="finial")
+        saved_pathname = save_yolact_net(yolact_net, args, iteration, epoch, mode="finial")
+
+    return saved_pathname 
 
 
 def set_lr(optimizer, new_lr):
@@ -563,6 +571,7 @@ def compute_validation_loss(net, data_loader, criterion, args):
         
         loss_labels = sum([[k, losses[k]] for k in loss_types if k in losses], [])
         print(('Validation ||' + (' %s: %.3f |' * len(losses)) + ')') % tuple(loss_labels), flush=True)
+
 
 def compute_validation_map(epoch, iteration, yolact_net, dataset, log:Log=None):
     with torch.no_grad():
