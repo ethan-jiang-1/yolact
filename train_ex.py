@@ -589,6 +589,11 @@ def compute_validation_map(epoch, iteration, yolact_net, dataset, log:Log=None):
 def setup_eval(args):
     eval_script.parse_args(['--no_bar', '--max_images='+str(args.validation_size)])
 
+def reset_kill_signal():
+    global sig_num
+    sig_num = None
+    print("reset sig_num")
+
 def prompt_kill_signal():
     pid = os.getpid()
     print()
@@ -601,7 +606,7 @@ def prompt_kill_signal():
 
 if __name__ == '__main__':
     prompt_kill_signal()
-    
+
     args = parse_args()
     update_env_and_cfg_by_args(args)
 
