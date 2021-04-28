@@ -27,8 +27,6 @@ import datetime
 import eval as eval_script
 
 import signal
-#import os
-#import time
 
 sig_num = None
 def receive_signal(signum, stack):
@@ -42,7 +40,20 @@ def get_sig_num():
     return sig_num
 
 signal.signal(signal.SIGUSR1, receive_signal)
-#signal.signal(signal.SIGUSR2, receive_signal)
+
+def reset_kill_signal():
+    global sig_num
+    sig_num = None
+    print("reset sig_num")
+
+def prompt_kill_signal():
+    pid = os.getpid()
+    print()
+    print('#m# start train_ex PID: {}'.format(pid))
+    print("run")
+    print("kill -n 10 {}".format(pid)) 
+    print("to fire signal 10 to this process")
+    print()
 
 
 loss_types = ['B', 'C', 'M', 'P', 'D', 'E', 'S', 'I']
@@ -623,20 +634,6 @@ def compute_validation_map(epoch, iteration, yolact_net, dataset, log:Log=None):
 
 def setup_eval(args):
     eval_script.parse_args(['--no_bar', '--max_images='+str(args.validation_size)])
-
-def reset_kill_signal():
-    global sig_num
-    sig_num = None
-    print("reset sig_num")
-
-def prompt_kill_signal():
-    pid = os.getpid()
-    print()
-    print('#m# start train_ex PID: {}'.format(pid))
-    print("run")
-    print("kill -n 10 {}".format(pid)) 
-    print("to fire signal 10 to this process")
-    print()
 
 
 if __name__ == '__main__':
